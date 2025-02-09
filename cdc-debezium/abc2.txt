@@ -1,0 +1,105 @@
+
+name: debezium-cluster
+services:
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+    networks:
+      - debezium-network
+
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: debezium
+      POSTGRES_PASSWORD: dbz
+      POSTGRES_DB: inventory
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    command: ["postgres", "-c", "wal_level=logical"]
+    networks:
+      - debezium-network
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:latest
+    container_name: schema-registry
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka:9092"
+      SCHEMA_REGISTRY_HOST_NAME: "schema-registry"
+    networks:
+      - debezium-network
+
+  debezium:
+    image: debezium/server:2.7.3.Final
+    container_name: debezium
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+      - postgres
+      - schema-registry
+    environment:
+      # Debezium Server Configuration
+      DEBEZIUM_SERVER_NAME: "debezium"
+      DEBEZIUM_SOURCE_OFFSET_STORAGE_FILE_FILENAME: "/debezium/data/offsets.dat"
+      DEBEZIUM_SOURCE_OFFSET_FLUSH_INTERVAL_MS: "60000"
+      DEBEZIUM_SOURCE_TOMBSTONES_ON_DELETE: "false"
+      QUARKUS_LOG_CONSOLE_JSON: "false"
+
+      # Debezium Connectors Configuration
+      DEBEZIUM_SOURCE_CONNECTOR_CLASS: "io.debezium.connector.postgresql.PostgresConnector"
+      DEBEZIUM_SOURCE_PLUGIN_NAME: "pgoutput"
+      DEBEZIUM_SOURCE_DATABASE_HOSTNAME: "postgres"
+      DEBEZIUM_SOURCE_DATABASE_PORT: "5432"
+      DEBEZIUM_SOURCE_DATABASE_USER: "debezium"
+      DEBEZIUM_SOURCE_DATABASE_PASSWORD: "dbz"
+      DEBEZIUM_SOURCE_DATABASE_DBNAME: "inventory"
+      DEBEZIUM_SOURCE_TABLE_INCLUDE_LIST: "public.customers,public.orders,public.products"
+      DEBEZIUM_SOURCE_SCHEMA_INCLUDE_LIST: "public"
+      DEBEZIUM_SOURCE_TOPIC_PREFIX: "debezium"
+
+      DEBEZIUM_SINK_TYPE: "kafka"
+      DEBEZIUM_TRANSFORMS: "unwrap,reroute"
+      DEBEZIUM_TRANSFORMS_UNWRAP_TYPE: "io.debezium.transforms.ExtractNewRecordState"
+      DEBEZIUM_FORMAT_VALUE: "json"
+      DEBEZIUM_FORMAT_VALUE_SCHEMAS_ENABLE: "false"
+      DEBEZIUM_SOURCE_DECIMAL_HANDLING_MODE: "string"
+      DEBEZIUM_TRANSFORMS_REROUTE_TYPE: "io.debezium.transforms.ByLogicalTableRouter"    
+      
+      DEBEZIUM_SINK_KAFKA_KEY_SERIALIZER: "org.apache.kafka.common.serialization.StringSerializer"
+      DEBEZIUM_SINK_KAFKA_VALUE_SERIALIZER: "io.confluent.kafka.serializers.KafkaJsonSchemaSerializer"
+      DEBEZIUM_SOURCE_SLOT_NAME: "debezium_slot"
+      DEBEZIUM_SINK_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+      DEBEZIUM_SINK_KAFKA_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+    volumes:
+      - debezium-data:/debezium/data
+    networks:
+      - debezium-network
+
+volumes:
+  postgres:
+  debezium-data:
+
+networks:
+  debezium-network:
+    driver: bridge

@@ -1,0 +1,28 @@
+1.docker exec -it postgres psql -U myuser -d mydatabase
+2.
+
+ALTER SYSTEM SET wal_level = logical;
+ALTER SYSTEM SET max_wal_senders = 10;
+ALTER SYSTEM SET max_replication_slots = 10;
+
+docker restart postgres
+
+3.
+curl -i -X POST -H "Accept:application/json" -H "Content-Type:application/json" \
+  http://localhost:8083/connectors/ -d '{
+    "name": "postgres-connector",
+    "config": {
+      "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+      "database.hostname": "postgres",
+      "database.port": "5432",
+      "database.user": "myuser",
+      "database.password": "mypassword",
+      "database.dbname": "mydatabase",
+      "database.server.name": "postgres",
+      "table.include.list": "public.*",
+      "plugin.name": "pgoutput",
+      "slot.name": "debezium_slot",
+      "publication.name": "debezium_pub",
+	  "topic.prefix": "mydbtopic"
+    }
+  }'
